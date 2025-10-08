@@ -1,15 +1,13 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Select } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
-import type { RetellAgentConfig } from '@/types/agent'
-
-interface VoiceAgentFormProps {
-  onSave?: (data: RetellAgentConfig) => Promise<void>
-}
+import { SettingsService } from '@/services/settings.service'
+import { DEFAULT_SETTINGS, type AgentSettings } from '@/types/settings'
+import { areSettingsEqual, validateSettings, cloneSettings } from '@/utils/settings-helpers'
 
 const LANGUAGES = [
   { value: 'en-US', label: 'English (US)' },
@@ -31,7 +29,6 @@ const LANGUAGES = [
 
 const VOICES = [
   { value: '11labs-Adrian', label: 'Adrian (Male, Authoritative)' },
-  { value: '11labs-Aria', label: 'Aria (Female, Expressive)' },
   { value: '11labs-Clyde', label: 'Clyde (Male, Warm)' },
   { value: '11labs-Emily', label: 'Emily (Female, Calm)' },
   { value: '11labs-Josh', label: 'Josh (Male, Casual)' },
@@ -39,23 +36,68 @@ const VOICES = [
   { value: '11labs-Sam', label: 'Sam (Male, Friendly)' },
 ]
 
-export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
-  // Form state
-  const [prompt, setPrompt] = useState('')
-  const [language, setLanguage] = useState('en-US')
-  const [voiceId, setVoiceId] = useState('11labs-Adrian')
-  const [voiceSpeed, setVoiceSpeed] = useState(1.0)
-  const [responsiveness, setResponsiveness] = useState(1.0)
-  const [interruptionSensitivity, setInterruptionSensitivity] = useState(1.0)
-  const [voiceTemperature, setVoiceTemperature] = useState(1.0)
-  const [volume, setVolume] = useState(1.0)
-  
-  // Error state
+export function VoiceAgentForm() {
+  // State management
+  const [initialSettings, setInitialSettings] = useState<AgentSettings>(DEFAULT_SETTINGS)
+  const [currentSettings, setCurrentSettings] = useState<AgentSettings>(DEFAULT_SETTINGS)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [generalError, setGeneralError] = useState('')
   
-  const [isPending, startTransition] = useTransition()
+  const [, startTransition] = useTransition()
   const { showToast } = useToast()
+
+  // Calculate if form has unsaved changes
+  const isDirty = !areSettingsEqual(initialSettings, currentSettings)
+
+  // Load user settings on mount
+  useEffect(() => {
+    const loadSettings = async () => {
+      setIsLoading(true)
+      try {
+        const savedSettings = await SettingsService.loadUserSettings()
+        
+        if (savedSettings) {
+          // User has saved settings - use them
+          setInitialSettings(savedSettings)
+          setCurrentSettings(cloneSettings(savedSettings))
+          console.log('Loaded saved settings')
+        } else {
+          // New user - use defaults
+          setInitialSettings(DEFAULT_SETTINGS)
+          setCurrentSettings(cloneSettings(DEFAULT_SETTINGS))
+          console.log('Using default settings (new user)')
+        }
+      } catch (error) {
+        console.error('Error loading settings:', error)
+        showToast('Failed to load settings', 'error')
+        // Fallback to defaults
+        setInitialSettings(DEFAULT_SETTINGS)
+        setCurrentSettings(cloneSettings(DEFAULT_SETTINGS))
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadSettings()
+  }, [showToast])
+
+  // Update helper to maintain immutability
+  const updateSetting = <K extends keyof AgentSettings>(
+    key: K,
+    value: AgentSettings[K]
+  ) => {
+    setCurrentSettings(prev => ({ ...prev, [key]: value }))
+    // Clear field error when user starts typing
+    if (fieldErrors[key]) {
+      setFieldErrors(prev => {
+        const newErrors = { ...prev }
+        delete newErrors[key]
+        return newErrors
+      })
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -64,88 +106,86 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
     setFieldErrors({})
     setGeneralError('')
 
-    // Validation
-    if (!prompt || prompt.trim().length === 0) {
-      setFieldErrors({ prompt: 'Prompt is required' })
-      showToast('Prompt is required', 'error')
+    // Validate settings
+    const validationError = validateSettings(currentSettings)
+    if (validationError) {
+      setGeneralError(validationError)
+      showToast(validationError, 'error')
       return
     }
 
-    if (prompt.trim().length < 10) {
-      setFieldErrors({ prompt: 'Prompt must be at least 10 characters' })
-      showToast('Prompt must be at least 10 characters', 'error')
-      return
-    }
-
-    // Build payload
-    const data: RetellAgentConfig = {
-      voice_speed: voiceSpeed,
-      responsiveness: responsiveness,
-      interruption_sensitivity: interruptionSensitivity,
-      voice_temperature: voiceTemperature,
-      volume: volume,
-      language: language,
-      voice_id: voiceId,
-      prompt: prompt.trim(),
-    }
+    setIsSaving(true)
 
     startTransition(async () => {
       try {
-        if (onSave) {
-          await onSave(data)
-        } else {
-          // Call our API endpoint
-          const response = await fetch('/api/agent/update', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(data),
-          })
+        // 1. Update Retell APIs (Agent + LLM)
+        const retellResponse = await fetch('/api/agent/update', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(currentSettings),
+        })
 
-          const result = await response.json()
+        const retellResult = await retellResponse.json()
 
-          if (!response.ok) {
-            // Handle field-specific errors
-            if (result.field && result.error) {
-              setFieldErrors({ [result.field]: result.error })
-              showToast(`Error in ${result.field}: ${result.error}`, 'error')
-            } else {
-              setGeneralError(result.error || 'Failed to update agent')
-              showToast(result.error || 'Failed to update agent', 'error')
-            }
-            console.error('API error:', result)
-            return
+        if (!retellResponse.ok) {
+          // Handle field-specific errors from Retell
+          if (retellResult.field && retellResult.error) {
+            setFieldErrors({ [retellResult.field]: retellResult.error })
+            showToast(`Error: ${retellResult.error}`, 'error')
+          } else {
+            setGeneralError(retellResult.error || 'Failed to update agent')
+            showToast(retellResult.error || 'Failed to update agent', 'error')
           }
-
-          // Clear errors on success
-          setFieldErrors({})
-          setGeneralError('')
-          showToast('Agent configuration updated successfully!', 'success')
-          console.log('Update successful:', result)
+          setIsSaving(false)
+          return
         }
+
+        // 2. Save to Supabase (for persistence)
+        const saveSuccess = await SettingsService.saveUserSettings(currentSettings)
+        
+        if (!saveSuccess) {
+          // Retell updated but Supabase failed - warn but don't fail
+          console.warn('Settings saved to Retell but failed to save to Supabase')
+          showToast('Settings updated but may not persist', 'warning')
+        }
+
+        // 3. Update initial settings to new saved state
+        setInitialSettings(cloneSettings(currentSettings))
+        setFieldErrors({})
+        setGeneralError('')
+        showToast('Agent configuration saved successfully!', 'success')
+        console.log('Settings saved successfully')
+
       } catch (error: unknown) {
         setGeneralError('Network error occurred')
         showToast('Failed to save configuration', 'error')
         console.error('Error saving voice agent:', error)
+      } finally {
+        setIsSaving(false)
       }
     })
   }
 
   const handleReset = () => {
-    setPrompt('')
-    setLanguage('en-US')
-    setVoiceId('11labs-Adrian')
-    setVoiceSpeed(1.0)
-    setResponsiveness(1.0)
-    setInterruptionSensitivity(1.0)
-    setVoiceTemperature(1.0)
-    setVolume(1.0)
-    showToast('Form reset to defaults', 'info')
+    setCurrentSettings(cloneSettings(initialSettings))
+    setFieldErrors({})
+    setGeneralError('')
+    showToast('Changes discarded', 'info')
   }
 
-  const charCount = prompt.length
+  const charCount = currentSettings.prompt.length
   const charLimit = 2000
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '48px' }}>
+        <div style={{ color: '#A8F0F0', fontSize: '16px' }}>Loading settings...</div>
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -160,6 +200,11 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
         <p style={{ fontSize: "16px", lineHeight: "24px", color: "rgba(168, 240, 240, 0.7)" }}>
           Customize your voice agent&apos;s behavior and voice settings
         </p>
+        {isDirty && (
+          <p style={{ fontSize: "14px", lineHeight: "20px", color: "#FFC300", marginTop: "8px" }}>
+            ● Unsaved changes
+          </p>
+        )}
       </div>
 
       <form onSubmit={handleSubmit}>
@@ -209,13 +254,13 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
             <Textarea
               id="prompt"
               name="prompt"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
+              value={currentSettings.prompt}
+              onChange={(e) => updateSetting('prompt', e.target.value)}
               placeholder="Describe how your voice agent should behave..."
               rows={6}
               maxLength={charLimit}
               required
-              disabled={isPending}
+              disabled={isSaving}
               style={{
                 height: "120px",
                 backgroundColor: "#002929",
@@ -248,10 +293,10 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
               <Select
                 id="language"
                 name="language"
-                value={language}
-                onChange={(e) => setLanguage(e.target.value)}
+                value={currentSettings.language}
+                onChange={(e) => updateSetting('language', e.target.value)}
                 required
-                disabled={isPending}
+                disabled={isSaving}
                 style={{
                   height: "48px",
                   backgroundColor: "#002929",
@@ -287,9 +332,9 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
               <Select
                 id="voice"
                 name="voice"
-                value={voiceId}
-                onChange={(e) => setVoiceId(e.target.value)}
-                disabled={isPending}
+                value={currentSettings.voice_id}
+                onChange={(e) => updateSetting('voice_id', e.target.value)}
+                disabled={isSaving}
                 style={{
                   height: "48px",
                   backgroundColor: "#002929",
@@ -320,7 +365,7 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
             style={{ fontSize: "14px", lineHeight: "20px", color: "#A8F0F0", marginBottom: "8px" }}
             className="font-medium block"
           >
-            Voice Speed: <span style={{ color: "#FFC300" }}>{voiceSpeed.toFixed(2)}x</span>
+            Voice Speed: <span style={{ color: "#FFC300" }}>{currentSettings.voice_speed.toFixed(2)}x</span>
           </label>
           <div style={{ position: "relative", marginBottom: "8px" }}>
             <input
@@ -330,17 +375,12 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
               min="0.5"
               max="2.0"
               step="0.05"
-              value={voiceSpeed}
-              onChange={(e) => setVoiceSpeed(parseFloat(e.target.value))}
-              disabled={isPending}
+              value={currentSettings.voice_speed}
+              onChange={(e) => updateSetting('voice_speed', parseFloat(e.target.value))}
+              disabled={isSaving}
               style={{
                 width: "100%",
-                height: "8px",
-                background: `linear-gradient(to right, #FFC300 0%, #FFC300 ${((voiceSpeed - 0.5) / 1.5) * 100}%, #004d4d ${((voiceSpeed - 0.5) / 1.5) * 100}%, #004d4d 100%)`,
-                borderRadius: "4px",
-                outline: "none",
-                appearance: "none",
-                cursor: isPending ? "not-allowed" : "pointer"
+                height: "8px"
               }}
             />
           </div>
@@ -358,7 +398,7 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
             style={{ fontSize: "14px", lineHeight: "20px", color: "#A8F0F0", marginBottom: "8px" }}
             className="font-medium block"
           >
-            Responsiveness: <span style={{ color: "#FFC300" }}>{responsiveness.toFixed(2)}</span>
+            Responsiveness: <span style={{ color: "#FFC300" }}>{currentSettings.responsiveness.toFixed(2)}</span>
           </label>
           <div style={{ position: "relative", marginBottom: "8px" }}>
             <input
@@ -368,17 +408,12 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
               min="0"
               max="1"
               step="0.05"
-              value={responsiveness}
-              onChange={(e) => setResponsiveness(parseFloat(e.target.value))}
-              disabled={isPending}
+              value={currentSettings.responsiveness}
+              onChange={(e) => updateSetting('responsiveness', parseFloat(e.target.value))}
+              disabled={isSaving}
               style={{
                 width: "100%",
-                height: "8px",
-                background: `linear-gradient(to right, #FFC300 0%, #FFC300 ${responsiveness * 100}%, #004d4d ${responsiveness * 100}%, #004d4d 100%)`,
-                borderRadius: "4px",
-                outline: "none",
-                appearance: "none",
-                cursor: isPending ? "not-allowed" : "pointer"
+                height: "8px"
               }}
             />
           </div>
@@ -395,7 +430,7 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
             style={{ fontSize: "14px", lineHeight: "20px", color: "#A8F0F0", marginBottom: "8px" }}
             className="font-medium block"
           >
-            Interruption Sensitivity: <span style={{ color: "#FFC300" }}>{interruptionSensitivity.toFixed(2)}</span>
+            Interruption Sensitivity: <span style={{ color: "#FFC300" }}>{currentSettings.interruption_sensitivity.toFixed(2)}</span>
           </label>
           <div style={{ position: "relative", marginBottom: "8px" }}>
             <input
@@ -405,17 +440,12 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
               min="0"
               max="1"
               step="0.05"
-              value={interruptionSensitivity}
-              onChange={(e) => setInterruptionSensitivity(parseFloat(e.target.value))}
-              disabled={isPending}
+              value={currentSettings.interruption_sensitivity}
+              onChange={(e) => updateSetting('interruption_sensitivity', parseFloat(e.target.value))}
+              disabled={isSaving}
               style={{
                 width: "100%",
-                height: "8px",
-                background: `linear-gradient(to right, #FFC300 0%, #FFC300 ${interruptionSensitivity * 100}%, #004d4d ${interruptionSensitivity * 100}%, #004d4d 100%)`,
-                borderRadius: "4px",
-                outline: "none",
-                appearance: "none",
-                cursor: isPending ? "not-allowed" : "pointer"
+                height: "8px"
               }}
             />
           </div>
@@ -432,7 +462,7 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
             style={{ fontSize: "14px", lineHeight: "20px", color: "#A8F0F0", marginBottom: "8px" }}
             className="font-medium block"
           >
-            Voice Temperature: <span style={{ color: "#FFC300" }}>{voiceTemperature.toFixed(1)}</span>
+            Voice Temperature: <span style={{ color: "#FFC300" }}>{currentSettings.voice_temperature.toFixed(1)}</span>
           </label>
           <div style={{ position: "relative", marginBottom: "8px" }}>
             <input
@@ -442,17 +472,12 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
               min="0"
               max="2"
               step="0.1"
-              value={voiceTemperature}
-              onChange={(e) => setVoiceTemperature(parseFloat(e.target.value))}
-              disabled={isPending}
+              value={currentSettings.voice_temperature}
+              onChange={(e) => updateSetting('voice_temperature', parseFloat(e.target.value))}
+              disabled={isSaving}
               style={{
                 width: "100%",
-                height: "8px",
-                background: `linear-gradient(to right, #FFC300 0%, #FFC300 ${(voiceTemperature / 2) * 100}%, #004d4d ${(voiceTemperature / 2) * 100}%, #004d4d 100%)`,
-                borderRadius: "4px",
-                outline: "none",
-                appearance: "none",
-                cursor: isPending ? "not-allowed" : "pointer"
+                height: "8px"
               }}
             />
           </div>
@@ -470,7 +495,7 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
             style={{ fontSize: "14px", lineHeight: "20px", color: "#A8F0F0", marginBottom: "8px" }}
             className="font-medium block"
           >
-            Volume: <span style={{ color: "#FFC300" }}>{volume.toFixed(1)}</span>
+            Volume: <span style={{ color: "#FFC300" }}>{currentSettings.volume.toFixed(1)}</span>
           </label>
           <div style={{ position: "relative", marginBottom: "8px" }}>
             <input
@@ -480,17 +505,12 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
               min="0"
               max="2"
               step="0.1"
-              value={volume}
-              onChange={(e) => setVolume(parseFloat(e.target.value))}
-              disabled={isPending}
+              value={currentSettings.volume}
+              onChange={(e) => updateSetting('volume', parseFloat(e.target.value))}
+              disabled={isSaving}
               style={{
                 width: "100%",
-                height: "8px",
-                background: `linear-gradient(to right, #FFC300 0%, #FFC300 ${(volume / 2) * 100}%, #004d4d ${(volume / 2) * 100}%, #004d4d 100%)`,
-                borderRadius: "4px",
-                outline: "none",
-                appearance: "none",
-                cursor: isPending ? "not-allowed" : "pointer"
+                height: "8px"
               }}
             />
           </div>
@@ -513,9 +533,9 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
               color: "#001a1a"
             }}
             className="font-semibold hover:bg-[#ffcd1a] transition-all"
-            disabled={isPending || charCount > charLimit || !prompt.trim()}
+            disabled={!isDirty || isSaving || charCount > charLimit || !currentSettings.prompt.trim()}
           >
-            {isPending ? (
+            {isSaving ? (
               <span className="flex items-center justify-center gap-2">
                 <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -525,10 +545,10 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                   ></path>
                 </svg>
-                Updating Agent...
+                Saving...
               </span>
             ) : (
-              'Save Configuration'
+              'Save Changes'
             )}
           </Button>
           <Button
@@ -543,13 +563,12 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
             }}
             className="hover:bg-[#004d4d] transition-all"
             onClick={handleReset}
-            disabled={isPending}
+            disabled={!isDirty || isSaving}
           >
-            Reset
+            Discard
           </Button>
         </div>
       </form>
-
     </div>
   )
 }
