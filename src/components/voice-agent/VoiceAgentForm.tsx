@@ -65,7 +65,13 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
     setGeneralError('')
 
     // Validation
-    if (prompt && prompt.trim().length < 10) {
+    if (!prompt || prompt.trim().length === 0) {
+      setFieldErrors({ prompt: 'Prompt is required' })
+      showToast('Prompt is required', 'error')
+      return
+    }
+
+    if (prompt.trim().length < 10) {
       setFieldErrors({ prompt: 'Prompt must be at least 10 characters' })
       showToast('Prompt must be at least 10 characters', 'error')
       return
@@ -80,7 +86,7 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
       volume: volume,
       language: language,
       voice_id: voiceId,
-      prompt: prompt.trim() || undefined,
+      prompt: prompt.trim(),
     }
 
     startTransition(async () => {
@@ -188,7 +194,7 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
                 style={{ fontSize: "14px", lineHeight: "20px", color: "#A8F0F0" }}
                 className="font-medium"
               >
-                Agent Prompt (Optional)
+                Agent Prompt *
               </label>
               <span
                 style={{
@@ -208,6 +214,7 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
               placeholder="Describe how your voice agent should behave..."
               rows={6}
               maxLength={charLimit}
+              required
               disabled={isPending}
               style={{
                 height: "120px",
@@ -506,7 +513,7 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
               color: "#001a1a"
             }}
             className="font-semibold hover:bg-[#ffcd1a] transition-all"
-            disabled={isPending || charCount > charLimit}
+            disabled={isPending || charCount > charLimit || !prompt.trim()}
           >
             {isPending ? (
               <span className="flex items-center justify-center gap-2">

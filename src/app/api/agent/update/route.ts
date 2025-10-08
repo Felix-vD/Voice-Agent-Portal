@@ -110,6 +110,14 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Validate prompt
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Prompt is required' },
+        { status: 400 }
+      )
+    }
+
     // Build payload for Retell API
     const payload: Record<string, unknown> = {
       voice_speed,
@@ -118,15 +126,12 @@ export async function POST(request: NextRequest) {
       voice_temperature,
       volume,
       language,
+      general_prompt: prompt.trim(),
     }
 
     // Add optional fields if provided
     if (voice_id) {
       payload.voice_id = voice_id
-    }
-
-    if (prompt) {
-      payload.general_prompt = prompt
     }
 
     // Make request to Retell API

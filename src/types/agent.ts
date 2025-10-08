@@ -6,7 +6,7 @@ export interface RetellAgentConfig {
   volume: number // 0 - 2
   language: string // "en-US", "es-ES", etc.
   voice_id?: string // Optional: "11labs-Adrian" etc.
-  prompt?: string // Agent behavior prompt
+  prompt: string // Required: Agent behavior prompt
 }
 
 export interface RetellApiResponse {
