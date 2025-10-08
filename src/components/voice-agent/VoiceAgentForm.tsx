@@ -118,7 +118,7 @@ export function VoiceAgentForm({ onSave }: VoiceAgentFormProps) {
           showToast('Agent configuration updated successfully!', 'success')
           console.log('Update successful:', result)
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         setGeneralError('Network error occurred')
         showToast('Failed to save configuration', 'error')
         console.error('Error saving voice agent:', error)

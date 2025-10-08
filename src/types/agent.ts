@@ -13,6 +13,6 @@ export interface RetellApiResponse {
   success: boolean
   message?: string
   error?: string
-  data?: any
+  data?: Record<string, unknown>
 }
 

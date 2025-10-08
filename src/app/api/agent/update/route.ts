@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
 // Helper function to identify which field caused the error
-function getErrorField(responseData: any, payload: any): string | null {
-  if (!responseData.message) return null
+function getErrorField(responseData: Record<string, unknown>): string | null {
+  if (!responseData.message || typeof responseData.message !== 'string') return null
   
   const message = responseData.message.toLowerCase()
   
@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Build payload for Retell API
-    const payload: any = {
+    const payload: Record<string, unknown> = {
       voice_speed,
       responsiveness,
       interruption_sensitivity,
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (prompt) {
-      payload.prompt = prompt
+      payload.general_prompt = prompt
     }
 
     // Make request to Retell API
@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
     
     console.log('Sending request to Retell API:', {
       url: retellUrl,
-      payload: { ...payload, prompt: prompt ? `${prompt.substring(0, 50)}...` : undefined }
+      payload: { ...payload, general_prompt: prompt ? `${prompt.substring(0, 50)}...` : undefined }
     })
     
     // Debug: Log full payload for prompt debugging
@@ -146,8 +146,8 @@ export async function POST(request: NextRequest) {
       volume: payload.volume,
       language: payload.language,
       voice_id: payload.voice_id,
-      prompt: payload.prompt,
-      prompt_length: payload.prompt ? payload.prompt.length : 0
+      general_prompt: payload.general_prompt,
+      prompt_length: typeof payload.general_prompt === 'string' ? payload.general_prompt.length : 0
     })
 
     const retellResponse = await fetch(retellUrl, {
@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
         payload: payload
       })
       
-      if (responseData.message) {
+      if (responseData.message && typeof responseData.message === 'string') {
         const message = responseData.message.toLowerCase()
         
         // Voice ID errors - check for various voice-related error patterns
@@ -212,7 +212,7 @@ export async function POST(request: NextRequest) {
           errorField = 'volume'
         }
         // Prompt errors
-        else if (message.includes('prompt') || message.includes('instruction')) {
+        else if (message.includes('prompt') || message.includes('instruction') || message.includes('general_prompt')) {
           humanReadableError = `Prompt error: ${responseData.message}`
           errorField = 'prompt'
         }
@@ -243,13 +243,15 @@ export async function POST(request: NextRequest) {
         else {
           humanReadableError = responseData.message
         }
-      } else if (responseData.error) {
+      } else if (responseData.error && typeof responseData.error === 'string') {
         humanReadableError = responseData.error
       }
       
       // If we still don't have a field, try to guess from the error content
       if (!errorField) {
-        const fullError = (responseData.message || responseData.error || '').toLowerCase()
+        const message = typeof responseData.message === 'string' ? responseData.message : ''
+        const error = typeof responseData.error === 'string' ? responseData.error : ''
+        const fullError = (message || error || '').toLowerCase()
         if (fullError.includes('voice') || fullError.includes('11labs')) {
           errorField = 'voice_id'
         } else if (fullError.includes('language')) {
@@ -262,7 +264,7 @@ export async function POST(request: NextRequest) {
           success: false,
           error: humanReadableError,
           details: responseData,
-          field: errorField || getErrorField(responseData, payload)
+          field: errorField || getErrorField(responseData)
         },
         { status: retellResponse.status }
       )
@@ -277,13 +279,15 @@ export async function POST(request: NextRequest) {
       data: responseData
     })
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error in agent update endpoint:', error)
+
+    const errorMessage = error instanceof Error ? error.message : 'Internal server error'
 
     return NextResponse.json(
       {
         success: false,
-        error: error.message || 'Internal server error',
+        error: errorMessage,
       },
       { status: 500 }
     )
