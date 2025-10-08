@@ -12,6 +12,7 @@ Add these to your `.env.local` file:
 # Retell AI Configuration
 RETELL_API_KEY=your_retell_api_key_here
 RETELL_AGENT_ID=your_agent_id_here
+RETELL_LLM_ID=your_llm_id_here
 
 # Supabase (already configured)
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
@@ -31,6 +32,12 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
    - In Retell Dashboard, go to Agents
    - Select your agent or create a new one
    - Copy the Agent ID (format: `16b980523634a6dc504898cda492e939`)
+   - Paste it in `.env.local`
+
+3. **RETELL_LLM_ID**:
+   - In Retell Dashboard, go to Response Engine
+   - Select your LLM or create a new one
+   - Copy the LLM ID (format: `llm_1234567890abcdef`)
    - Paste it in `.env.local`
 
 ## Configuration Parameters
@@ -103,6 +110,10 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
   "prompt": "You are a helpful assistant..."
 }
 ```
+
+**What happens internally**:
+1. **Agent Update**: `PATCH /update-agent/{agent_id}` with voice/language/speeds
+2. **LLM Update**: `PATCH /update-retell-llm/{llm_id}` with `{"general_prompt": "..."}`
 
 **Success Response** (200):
 ```json

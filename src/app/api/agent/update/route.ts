@@ -38,6 +38,7 @@ export async function POST(request: NextRequest) {
     // Validate required environment variables
     const retellApiKey = process.env.RETELL_API_KEY
     const agentId = process.env.RETELL_AGENT_ID
+    const llmId = process.env.RETELL_LLM_ID
 
     if (!retellApiKey) {
       console.error('RETELL_API_KEY is not set')
@@ -51,6 +52,14 @@ export async function POST(request: NextRequest) {
       console.error('RETELL_AGENT_ID is not set')
       return NextResponse.json(
         { success: false, error: 'Server configuration error: Missing Agent ID' },
+        { status: 500 }
+      )
+    }
+
+    if (!llmId) {
+      console.error('RETELL_LLM_ID is not set')
+      return NextResponse.json(
+        { success: false, error: 'Server configuration error: Missing LLM ID' },
         { status: 500 }
       )
     }
@@ -118,76 +127,120 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Build payload for Retell API
-    const payload: Record<string, unknown> = {
+    // Build payload for Agent API (voice/language/speeds/etc.)
+    const agentPayload: Record<string, unknown> = {
       voice_speed,
       responsiveness,
       interruption_sensitivity,
       voice_temperature,
       volume,
       language,
-      general_prompt: prompt.trim(),
     }
 
     // Add optional fields if provided
     if (voice_id) {
-      payload.voice_id = voice_id
+      agentPayload.voice_id = voice_id
     }
 
-    // Make request to Retell API
-    const retellUrl = `https://api.retellai.com/update-agent/${agentId}`
-    
-    console.log('Sending request to Retell API:', {
-      url: retellUrl,
-      payload: { ...payload, general_prompt: prompt ? `${prompt.substring(0, 50)}...` : undefined }
-    })
-    
-    // Debug: Log full payload for prompt debugging
-    console.log('Full payload being sent to Retell:', {
-      voice_speed: payload.voice_speed,
-      responsiveness: payload.responsiveness,
-      interruption_sensitivity: payload.interruption_sensitivity,
-      voice_temperature: payload.voice_temperature,
-      volume: payload.volume,
-      language: payload.language,
-      voice_id: payload.voice_id,
-      general_prompt: payload.general_prompt,
-      prompt_length: typeof payload.general_prompt === 'string' ? payload.general_prompt.length : 0
-    })
+    // Build payload for LLM API (prompt only)
+    const llmPayload = {
+      general_prompt: prompt.trim(),
+    }
 
-    const retellResponse = await fetch(retellUrl, {
-      method: 'PATCH',
-      headers: {
-        'Authorization': `Bearer ${retellApiKey}`,
-        'Content-Type': 'application/json',
+    // Make requests to both Retell APIs
+    const agentUrl = `https://api.retellai.com/update-agent/${agentId}`
+    const llmUrl = `https://api.retellai.com/update-retell-llm/${llmId}`
+    
+    console.log('Sending requests to Retell APIs:', {
+      agentUrl,
+      llmUrl,
+      agentPayload,
+      llmPayload: { ...llmPayload, general_prompt: `${prompt.substring(0, 50)}...` }
+    })
+    
+    // Debug: Log full payloads
+    console.log('Full payloads being sent:', {
+      agent: {
+        voice_speed: agentPayload.voice_speed,
+        responsiveness: agentPayload.responsiveness,
+        interruption_sensitivity: agentPayload.interruption_sensitivity,
+        voice_temperature: agentPayload.voice_temperature,
+        volume: agentPayload.volume,
+        language: agentPayload.language,
+        voice_id: agentPayload.voice_id,
       },
-      body: JSON.stringify(payload),
+      llm: {
+        general_prompt: llmPayload.general_prompt,
+        prompt_length: llmPayload.general_prompt.length
+      }
     })
 
-    const responseData = await retellResponse.json()
+    // Make both API calls in parallel
+    const [agentResponse, llmResponse] = await Promise.all([
+      fetch(agentUrl, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${retellApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(agentPayload),
+      }),
+      fetch(llmUrl, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${retellApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(llmPayload),
+      })
+    ])
 
-    if (!retellResponse.ok) {
+    const agentData = await agentResponse.json()
+    const llmData = await llmResponse.json()
+
+    // Check if either request failed
+    if (!agentResponse.ok || !llmResponse.ok) {
       console.error('Retell API error:', {
-        status: retellResponse.status,
-        data: responseData,
-        payload: payload
+        agent: {
+          status: agentResponse.status,
+          data: agentData,
+          payload: agentPayload
+        },
+        llm: {
+          status: llmResponse.status,
+          data: llmData,
+          payload: llmPayload
+        }
       })
 
-      // Parse Retell API error messages into human-readable format
-      let humanReadableError = 'Failed to update agent configuration'
+      // Determine which API failed and parse error
+      let humanReadableError = 'Failed to update configuration'
       let errorField = null
-      
+      let failedResponse = null
+      let failedData = null
+
+      if (!agentResponse.ok) {
+        failedResponse = agentResponse
+        failedData = agentData
+        humanReadableError = 'Failed to update agent settings'
+      } else if (!llmResponse.ok) {
+        failedResponse = llmResponse
+        failedData = llmData
+        humanReadableError = 'Failed to update prompt'
+        errorField = 'prompt'
+      }
+
       // Log the raw error for debugging
       console.log('Raw Retell API error:', {
-        status: retellResponse.status,
-        message: responseData.message,
-        error: responseData.error,
-        details: responseData,
-        payload: payload
+        failedApi: !agentResponse.ok ? 'agent' : 'llm',
+        status: failedResponse?.status,
+        message: failedData?.message,
+        error: failedData?.error,
+        details: failedData
       })
       
-      if (responseData.message && typeof responseData.message === 'string') {
-        const message = responseData.message.toLowerCase()
+      if (failedData?.message && typeof failedData.message === 'string') {
+        const message = failedData.message.toLowerCase()
         
         // Voice ID errors - check for various voice-related error patterns
         if (message.includes('voice') || message.includes('11labs') || message.includes('aria') || message.includes('adrian') || message.includes('voice_id') || message.includes('not found')) {
@@ -218,7 +271,7 @@ export async function POST(request: NextRequest) {
         }
         // Prompt errors
         else if (message.includes('prompt') || message.includes('instruction') || message.includes('general_prompt')) {
-          humanReadableError = `Prompt error: ${responseData.message}`
+          humanReadableError = `Prompt error: ${failedData.message}`
           errorField = 'prompt'
         }
         // Authentication errors
@@ -226,10 +279,13 @@ export async function POST(request: NextRequest) {
           humanReadableError = `Authentication failed. Please check your API credentials.`
           errorField = 'auth'
         }
-        // Agent not found
+        // Agent/LLM not found
         else if (message.includes('agent') && message.includes('not found')) {
           humanReadableError = `Agent not found. Please check your Agent ID configuration.`
           errorField = 'agent'
+        } else if (message.includes('llm') && message.includes('not found')) {
+          humanReadableError = `LLM not found. Please check your LLM ID configuration.`
+          errorField = 'llm'
         }
         // Check for specific field validation errors
         else if (message.includes('validation') || message.includes('invalid')) {
@@ -241,26 +297,28 @@ export async function POST(request: NextRequest) {
             humanReadableError = `Language "${language}" is not valid. Please select a different language.`
             errorField = 'language'
           } else {
-            humanReadableError = `Validation error: ${responseData.message}`
+            humanReadableError = `Validation error: ${failedData.message}`
           }
         }
         // Generic fallback
         else {
-          humanReadableError = responseData.message
+          humanReadableError = failedData.message
         }
-      } else if (responseData.error && typeof responseData.error === 'string') {
-        humanReadableError = responseData.error
+      } else if (failedData?.error && typeof failedData.error === 'string') {
+        humanReadableError = failedData.error
       }
       
       // If we still don't have a field, try to guess from the error content
       if (!errorField) {
-        const message = typeof responseData.message === 'string' ? responseData.message : ''
-        const error = typeof responseData.error === 'string' ? responseData.error : ''
+        const message = typeof failedData?.message === 'string' ? failedData.message : ''
+        const error = typeof failedData?.error === 'string' ? failedData.error : ''
         const fullError = (message || error || '').toLowerCase()
         if (fullError.includes('voice') || fullError.includes('11labs')) {
           errorField = 'voice_id'
         } else if (fullError.includes('language')) {
           errorField = 'language'
+        } else if (fullError.includes('prompt') || fullError.includes('llm')) {
+          errorField = 'prompt'
         }
       }
 
@@ -268,20 +326,23 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           error: humanReadableError,
-          details: responseData,
-          field: errorField || getErrorField(responseData)
+          details: failedData,
+          field: errorField || getErrorField(failedData || {})
         },
-        { status: retellResponse.status }
+        { status: failedResponse?.status || 500 }
       )
     }
 
     // Success
-    console.log('Successfully updated Retell agent')
+    console.log('Successfully updated both Retell agent and LLM')
 
     return NextResponse.json({
       success: true,
-      message: 'Agent configuration updated successfully',
-      data: responseData
+      message: 'Agent configuration and prompt updated successfully',
+      data: {
+        agent: agentData,
+        llm: llmData
+      }
     })
 
   } catch (error: unknown) {
