@@ -19,7 +19,7 @@ export default async function HomePage() {
     >
       {/* Header */}
       <header style={{ borderBottom: "2px solid #004d4d", backgroundColor: "rgba(0, 41, 41, 0.8)" }} className="backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-8 py-6 flex items-center justify-start">
+        <div className="max-w-7xl mx-auto px-8 py-6 flex items-center justify-end">
           <form action={logout}>
             <Button 
               variant="outline" 

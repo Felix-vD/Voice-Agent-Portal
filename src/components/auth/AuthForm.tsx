@@ -204,7 +204,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 
         <div className="text-center">
           <div
-            style={{ fontSize: "14px", lineHeight: "20px", color: "rgba(168, 240, 240, 0.6)", marginBottom: "16px" }}
+            style={{ fontSize: "14px", lineHeight: "20px", color: "rgba(168, 240, 240, 0.6)" }}
           >
             {mode === "login" ? "Don't have an account?" : "Already have an account?"}{" "}
             <Link
@@ -215,18 +215,6 @@ export function AuthForm({ mode }: AuthFormProps) {
               {mode === "login" ? "Sign up" : "Sign in"}
             </Link>
           </div>
-
-          {mode === "login" && (
-            <div>
-              <Link
-                href="/forgot-password"
-                style={{ fontSize: "14px", lineHeight: "20px", color: "rgba(168, 240, 240, 0.6)" }}
-                className="hover:text-[#A8F0F0] transition-colors"
-              >
-                Forgot your password?
-              </Link>
-            </div>
-          )}
         </div>
       </div>
     </div>
