@@ -50,9 +50,8 @@ export function AuthForm({ mode }: AuthFormProps) {
           const result = await login(formData)
           if (result?.error) {
             setError(result.error)
-          } else {
-            setSuccess("Logging in...")
           }
+          // No success message on login - redirect happens automatically
         }
       } catch {
         setError("An unexpected error occurred")
